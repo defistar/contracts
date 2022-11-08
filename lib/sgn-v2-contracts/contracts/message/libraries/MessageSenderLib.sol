@@ -14,6 +14,7 @@ import "./MsgDataTypes.sol";
 import  "forge-std/console.sol";
 
 
+
 library MessageSenderLib {
     using SafeERC20 for IERC20;
 
@@ -87,6 +88,7 @@ library MessageSenderLib {
             _bridgeSendType,
             _messageBus
         );
+        console.log("************************");
         if (_message.length > 0) {
             IMessageBus(_messageBus).sendMessageWithTransfer{value: _fee}(
                 _receiver,

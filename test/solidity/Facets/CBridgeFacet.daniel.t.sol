@@ -9,6 +9,7 @@ import { CBridgeFacet, IMessageBus, MsgDataTypes, MessageSenderLib } from "lifi/
 import { ILiFi } from "lifi/Interfaces/ILiFi.sol";
 import { Executor, IERC20Proxy } from "lifi/Periphery/Executor.sol";
 import { Receiver } from "lifi/Periphery/Receiver.sol";
+import { ReceiverCelerIM } from "lifi/Periphery/ReceiverCelerIM.sol";
 import { ICBridge } from "lifi/Interfaces/ICBridge.sol";
 import { LibSwap } from "lifi/Libraries/LibSwap.sol";
 import { LibAllowList } from "lifi/Libraries/LibAllowList.sol";
@@ -27,24 +28,6 @@ contract TestCBridgeFacet is CBridgeFacet {
         LibAllowList.addAllowedSelector(_signature);
     }
 }
-//TODO move into own file, add interface
-//     interface MockReceiver {
-//         function completeCelerIMTx() external;
-//     }
-// contract MockBridgeRelease {
-
-//     MockReceiver immutable receiver;
-
-//     constructor(address receiverAddress) {
-//         receiver = MockReceiver(receiverAddress);
-//     }
-
-//     function release() public {
-//         MockReceiver receiver = MockReceiver(receiver);
-//         receiver.completeCelerIMTx();
-//         // receiver.executeMessageWithTransfer(null, _token, _amount, _srcChainId, _message, null); // TODO
-//     }
-// }
 
 contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     event LiFiTransferStarted(ILiFi.BridgeData bridgeData);
@@ -58,6 +41,14 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
         uint256 fee
     );
 
+    event LiFiTransferCompleted(
+        bytes32 indexed transactionId,
+        address receivingAssetId,
+        address receiver,
+        uint256 amount,
+        uint256 timestamp
+    );
+
         address internal constant CBRIDGE_ROUTER = 0x5427FEFA711Eff984124bFBB1AB6fbf5E3DA1820;
         address internal constant UNISWAP_V2_ROUTER_ETH = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
         address internal constant UNISWAP_V2_ROUTER_POLY = 0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506;
@@ -65,7 +56,8 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
         address internal constant DAI_ADDRESS = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
         address internal constant USDC_WHALE = 0x72A53cDBBcc1b9efa39c834A540550e23463AAcB;
         address internal constant DAI_WHALE = 0x5D38B4e4783E34e2301A2a36c39a03c45798C4dD;
-        address internal constant CBRIDGE_MESSAGE_BUS = 0x4066D196A423b2b3B8B054f4F40efB47a74E200C;
+        address internal constant CBRIDGE_MESSAGE_BUS_ETH = 0x4066D196A423b2b3B8B054f4F40efB47a74E200C;
+        address internal constant CBRIDGE_MESSAGE_BUS_POLY = 0xaFDb9C40C7144022811F034EE07Ce2E110093fe6;
 
     Vm internal immutable vm = Vm(HEVM_ADDRESS);
     LiFiDiamond internal diamond;
@@ -74,15 +66,9 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     ERC20 internal dai;
     UniswapV2Router02 internal uniswap;
     UniswapV2Router02 internal uniswap_poly;
-    uint256 public forkId_1;
-    uint256 public forkId_56;
-    uint256 public forkId_137;
 
-    // address dai_whale; 
-    // address usdc_whale;
-    // address dex;
-    // address daiAddress;
-    // address usdc_address; 
+
+
 
     // tokenAddress > user > balance 
     mapping(address => mapping(AddressTypes => uint256)) public initialBalances;
@@ -122,30 +108,22 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     mapping(uint256 => mapping(AddressTypes => address)) public addressesPerChain;
 
     mapping(uint256 => string) public chainNames;
+
+    // accounts per Chain
+    mapping(uint256 => CurrentAccounts) _accounts2;     //! not used yet
+
     CurrentAccounts public _accounts;
     uint256 activeChainId;
 
-    // function fork(uint8 chainId) internal {
-    //     if(chainId == 1){
-    //         string memory rpcUrl = vm.envString("ETH_NODE_URI_MAINNET");
-    //         uint256 blockNumber = vm.envUint("FORK_NUMBER");
-    //         vm.createSelectFork(rpcUrl, blockNumber);
-    //     } else if (chainId == 56) {
-    //         string memory rpcUrl = vm.envString("ETH_NODE_URI_BSC");
-    //         uint256 blockNumber = vm.envUint("FORK_NUMBER_BSC");
-    //         console.log("rpc: %s", rpcUrl);
-    //         console.log("blockNumber: %s", blockNumber);
-    //         vm.createSelectFork(rpcUrl, blockNumber);
-    //     } else {
-    //         revert("issue with fork");
-    //     }
-    // }
 
     // functionality ideas
     // - deploy to various chains
     // - deployer account
     // - accounts mapping with addresses for each fork
     // - constants for all relevant addresses (tokens, whales, dexs, diamond, periphery) TODO: add LI.FI, CBridge, etc.
+    // - produce standard swap data
+    // - set up users with initial balance
+    // -  modifier that re-activates current fork after function execution
 
 
 
@@ -155,7 +133,7 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
         selectForkWithAccounts(1);
 
         diamond = createDiamond();
-        cBridge = new TestCBridgeFacet(ICBridge(CBRIDGE_ROUTER), IMessageBus(CBRIDGE_MESSAGE_BUS));
+        cBridge = new TestCBridgeFacet(ICBridge(CBRIDGE_ROUTER), IMessageBus(CBRIDGE_MESSAGE_BUS_ETH));
 
         usdc = ERC20(USDC_ADDRESS);
         dai = ERC20(DAI_ADDRESS);
@@ -174,11 +152,14 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
         cBridge.setFunctionApprovalBySignature(uniswap.swapExactTokensForTokens.selector);
     }
 
+    //#region functions testFramework contract
+
+
     function initTestHelper() internal {
         // create forks
         forkIds[1] = vm.createFork(vm.envString("ETH_NODE_URI_MAINNET"), vm.envUint("FORK_NUMBER"));
-        forkIds[56] = vm.createFork(vm.envString("ETH_NODE_URI_BSC"), vm.envUint("FORK_NUMBER_BSC"));
-        forkIds[137] = vm.createFork(vm.envString("ETH_NODE_URI_POLYGON"), vm.envUint("FORK_NUMBER_POLYGON"));
+        forkIds[56] = vm.createFork(vm.envString("ETH_NODE_URI_BSC"), vm.envUint("BSC_FORK_NUMBER"));
+        forkIds[137] = vm.createFork(vm.envString("ETH_NODE_URI_POLYGON"), vm.envUint("POLYGON_FORK_NUMBER"));
         chainNames[forkIds[1]] = "MAINNET";
         chainNames[forkIds[56]] = "BSC";
         chainNames[forkIds[137]] = "POLYGON";
@@ -291,13 +272,18 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
 
     function deployReceiverAndExecutor() internal {
         _accounts.executor = address(new Executor(address(_accounts.usdcWhale), address(0)));
-        _accounts.receiver = address(new Receiver(address(_accounts.usdcWhale), address(0), address(_accounts.executor)));
+        // _accounts.receiver = address(new Receiver(address(_accounts.usdcWhale), address(0), address(_accounts.executor)));
+        _accounts.receiver = address(new ReceiverCelerIM(address(_accounts.usdcWhale), CBRIDGE_MESSAGE_BUS_POLY, address(_accounts.executor)));
     }
 
-    // function assertNoBalanceChangeInDAI(AddressTypes user) internal returns (bool) {
-    //     // TODO
-    //     return initialBalances[address(_accounts.daiToken)][user] == _accounts.daiToken.balanceOf(user);
-    // }
+    function assertNoBalanceChangeInDAI(AddressTypes user) internal returns (bool) {
+        // TODO
+        // return initialBalances[address(_accounts.daiToken)][user] == _accounts.daiToken.balanceOf(user);
+    }
+
+    //#endregion
+
+    //#region Working Tests
 
     // function testCanBridgeTokens(uint32 amount) public {
     //     vm.startPrank(DAI_WHALE);
@@ -455,14 +441,14 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     //     );
 
     //     // Calculate messageBusFee based on message length
-    //     uint256 messageBusFee = IMessageBus(CBRIDGE_MESSAGE_BUS).calcFee(destCallData);
+    //     uint256 messageBusFee = IMessageBus(CBRIDGE_MESSAGE_BUS_ETH).calcFee(destCallData);
 
     //     // prepare cBridgeData
     //     CBridgeFacet.CBridgeData memory cBridgeData = CBridgeFacet.CBridgeData({
     //         maxSlippage:    5000,
     //         nonce:          nonce,
-    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_ETH)),
-    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_POLY)) 
+    //         // callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_ETH)),
+    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_POLY)),  //TODO receiver?
     //         callData:       destCallData,
     //         messageBusFee:  messageBusFee,
     //         bridgeType:     MsgDataTypes.BridgeSendType.Liquidity
@@ -483,7 +469,7 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     //     );
 
     //         // check if MessageWithTransfer event will be emitted by MessageBus with correct data
-    //     vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS);
+    //     vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS_ETH);
     //     emit MessageWithTransfer(
     //         address(cBridge),
     //         bridgeData.receiver,
@@ -552,14 +538,13 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     //     );
 
     //     // Calculate messageBusFee based on message length
-    //     uint256 messageBusFee = IMessageBus(CBRIDGE_MESSAGE_BUS).calcFee(destCallData);
+    //     uint256 messageBusFee = IMessageBus(CBRIDGE_MESSAGE_BUS_ETH).calcFee(destCallData);
 
     //     // prepare cBridgeData
     //     CBridgeFacet.CBridgeData memory cBridgeData = CBridgeFacet.CBridgeData({
     //         maxSlippage:    5000,
     //         nonce:          nonce,
-    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_ETH)),
-    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_POLY)) 
+    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_ETH)),   //TODO change to receiver
     //         callData:       destCallData,
     //         messageBusFee:  messageBusFee,
     //         bridgeType:     MsgDataTypes.BridgeSendType.Liquidity
@@ -580,7 +565,7 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     //     );
 
     //         // check if MessageWithTransfer event will be emitted by MessageBus with correct data
-    //     vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS);
+    //     vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS_ETH);
     //     emit MessageWithTransfer(
     //         address(cBridge),
     //         bridgeData.receiver,
@@ -749,7 +734,7 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     //     );
 
     //     // Calculate messageBusFee based on message length
-    //     uint256 messageBusFee = IMessageBus(CBRIDGE_MESSAGE_BUS).calcFee(destCallData);
+    //     uint256 messageBusFee = IMessageBus(CBRIDGE_MESSAGE_BUS_ETH).calcFee(destCallData);
         
     //     // calculate nonce as recommended by CBridge
     //     uint64 nonce = uint64(uint(keccak256(abi.encodePacked(
@@ -762,8 +747,8 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     //     CBridgeFacet.CBridgeData memory cBridgeData = CBridgeFacet.CBridgeData({
     //         maxSlippage:    5000,
     //         nonce:          nonce,
-    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_ETH)),
-    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_POLY)) 
+
+    //         callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_ETH)), //TODO change to receiver?
     //         callData:       destCallData,
     //         messageBusFee:  messageBusFee,
     //         bridgeType:     MsgDataTypes.BridgeSendType.Liquidity
@@ -784,7 +769,7 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     //     );
 
     //         // check if MessageWithTransfer event will be emitted by MessageBus with correct data
-    //     vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS);
+    //     vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS_ETH);
     //     emit MessageWithTransfer(
     //         address(cBridge),
     //         bridgeData.receiver,
@@ -804,17 +789,9 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
     //     vm.stopPrank();
     // }
 
-    function testCrossChainTestCase(uint32 amount) public {
-        console.log("in testCrossChainTestCase");
-        vm.startPrank(_accounts.usdcWhale);
+    //#endregion
 
-        printAllAccounts();
-        // prepare dest side setup
-        printBalances();
-        setInitialBalances();
-
-        //! ---------- switch back to src side -------------
-
+    //#region cross-chain tests 
         // describe and prepare scenario
         // SOURCE (chainId 1 - Ethereum mainnet):
         //  1) swap USDC to 100 DAI
@@ -823,41 +800,259 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
         //  3) receive DAI from bridging
         //  4) swap DAI to USDC
 
-        // get initial balances on src side
-        // uint256 initialBalanceDAIsrc = dai.balanceOf(USDC_WHALE);
-        // uint256 initialBalanceUSDCsrc = usdc.balanceOf(USDC_WHALE);
+    // function testCrossChainTestCaseSrc(uint32 amount) public {
+    //     console.log("in testCrossChainTestCase");
+    //     vm.startPrank(_accounts.usdcWhale);
 
-        // prepare source swap data
-        address[] memory pathSrc = new address[](2);
-        pathSrc[0] = address(_accounts.usdcToken);
-        pathSrc[1] = address(_accounts.daiToken);
+    //     // prepare source swap data
+    //     address[] memory pathSrc = new address[](2);
+    //     pathSrc[0] = address(_accounts.usdcToken);
+    //     pathSrc[1] = address(_accounts.daiToken);
 
-        uint256 amountOut = 100 * 10**dai.decimals();   
+    //     uint256 amountOut = 100 * 10**dai.decimals();   
 
-        // Calculate USDC amount
-        uint256[] memory amounts = _accounts.dex.getAmountsIn(amountOut, pathSrc);
-        uint256 amountIn = amounts[0];
+    //     // Calculate USDC amount
+    //     uint256[] memory amounts = _accounts.dex.getAmountsIn(amountOut, pathSrc);
+    //     uint256 amountIn = amounts[0];
 
-        _accounts.usdcToken.approve(address(cBridge), amountIn);
+    //     _accounts.usdcToken.approve(address(cBridge), amountIn);
 
-        // prepare swap data for swap at src chain  (USDC -> DAI)
-        LibSwap.SwapData[] memory swapDataSrc = new LibSwap.SwapData[](1);
-        swapDataSrc[0] = LibSwap.SwapData({
-            callTo:             address(uniswap),
-            approveTo:          address(uniswap),
-            sendingAssetId:     address(_accounts.usdcToken),
-            receivingAssetId:   address(_accounts.daiToken),
-            fromAmount:         amountIn,
-            callData:           abi.encodeWithSelector(
-                                    uniswap.swapExactTokensForTokens.selector,
-                                    amountIn,
-                                    amountOut,
-                                    pathSrc,
-                                    address(cBridge),
-                                    block.timestamp + 20 minutes
-                                ),
-            requiresDeposit:    true
-        });
+    //     LibSwap.SwapData[] memory swapDataSrc = new LibSwap.SwapData[](1);
+    //     swapDataSrc[0] = LibSwap.SwapData({
+    //         callTo:             address(uniswap),
+    //         approveTo:          address(uniswap),
+    //         sendingAssetId:     address(_accounts.usdcToken),
+    //         receivingAssetId:   address(_accounts.daiToken),
+    //         fromAmount:         amountIn,
+    //         callData:           abi.encodeWithSelector(
+    //                                 uniswap.swapExactTokensForTokens.selector,
+    //                                 amountIn,
+    //                                 amountOut,
+    //                                 pathSrc,
+    //                                 address(cBridge),
+    //                                 block.timestamp + 20 minutes
+    //                             ),
+    //         requiresDeposit:    true
+    //     });
+
+    //     // prepare bridge data
+    //     ILiFi.BridgeData memory bridgeData = ILiFi.BridgeData({
+    //         transactionId:          "",
+    //         bridge:                 "cbridge",
+    //         integrator:             "",
+    //         referrer:               address(0),
+    //         sendingAssetId:         address(_accounts.daiToken),
+    //         receiver:               address(_accounts.usdcWhale),
+    //         minAmount:              amountOut,
+    //         destinationChainId:     137,
+    //         hasSourceSwaps:         true,
+    //         hasDestinationCall:     true
+    //     });
+
+    //     // prepare dest swap data
+    //     selectForkWithAccounts(137);
+    //     deployReceiverAndExecutor();
+    //     uint256 amountInDest = amountOut;
+    //     address[] memory pathDest = new address[](2);
+    //     pathDest[0] = address(_accounts.daiToken);
+    //     pathDest[1] = address(_accounts.usdcToken);
+    //     uint256[] memory amountsDest = _accounts.dex.getAmountsOut(amountInDest, pathDest);
+    //     uint256 amountOutDest = amountsDest[0];
+    //     console.log("_accounts.receiver: %s", _accounts.receiver);
+    //     console.log("_accounts.usdcToken: %s",address(_accounts.usdcToken));
+    //     _accounts.usdcToken.approve(_accounts.receiver, amountInDest);
+    //     console.log("5");
+
+    //     //! this needs to be updated to match the actual 
+
+    //     // prepare swap data for swap at dest chain  (DAI -> USDC)
+    //     LibSwap.SwapData[] memory swapDataDest = new LibSwap.SwapData[](1);
+    //     swapDataDest[0] = LibSwap.SwapData({
+    //         callTo:             address(_accounts.dex),
+    //         approveTo:          address(_accounts.dex),
+    //         receivingAssetId:   address(_accounts.daiToken),
+    //         sendingAssetId:     address(_accounts.usdcToken),
+    //         fromAmount:         amountInDest,
+    //         callData:           abi.encodeWithSelector(
+    //                                 uniswap.swapExactTokensForTokens.selector,
+    //                                 amountInDest,
+    //                                 amountOutDest,
+    //                                 pathDest,
+    //                                 _accounts.executor,     // has same address across networks
+    //                                 block.timestamp + 20 minutes
+    //                             ),
+    //         requiresDeposit:    false
+    //     });
+
+    //     bytes memory destCallData = abi.encode(
+    //         "",                     // transactionId
+    //         swapDataDest,           // swapData
+    //         _accounts.usdcWhale,    // receiver
+    //         _accounts.user1         // refundAddress
+    //     );
+
+    //     // //! ---------- switch back to src side -------------
+    //     selectForkWithAccounts(1);
+
+    //     // Calculate messageBusFee based on message length
+    //     uint256 messageBusFee = IMessageBus(CBRIDGE_MESSAGE_BUS_ETH).calcFee(destCallData);
+        
+    //     // calculate nonce as recommended by CBridge
+    //     uint64 nonce = uint64(uint(keccak256(abi.encodePacked(
+    //             block.timestamp,
+    //             msg.sender,
+    //             block.number
+    //     ))));
+
+    //     // prepare cBridgeData
+    //     CBridgeFacet.CBridgeData memory cBridgeData = CBridgeFacet.CBridgeData({
+    //         maxSlippage:    5000,
+    //         nonce:          nonce,
+    //         callTo:         abi.encodePacked(address(_accounts.receiver)),
+    //         callData:       destCallData,
+    //         messageBusFee:  messageBusFee,
+    //         bridgeType:     MsgDataTypes.BridgeSendType.Liquidity
+    //     });   
+
+    //     // prepare check for events
+    //         // calculate transferId as it will be produced during bridging
+    //     bytes32 transferId = keccak256(
+    //             abi.encodePacked(
+    //                 address(cBridge),
+    //                 address(_accounts.receiver),
+    //                 bridgeData.sendingAssetId,
+    //                 bridgeData.minAmount,
+    //                 uint64(bridgeData.destinationChainId),
+    //                 cBridgeData.nonce,
+    //                 uint64(block.chainid)
+    //             )
+    //     );
+ 
+    //     // event MessageWithTransfer:
+    //     //     address indexed sender,
+    //     //     address receiver,
+    //     //     uint256 dstChainId,
+    //     //     address bridge,
+    //     //     bytes32 srcTransferId,
+    //     //     bytes message,
+    //     //     uint256 fee
+    //     // );
+
+    //     console.log("");
+    //     console.log("");
+    //     console.log("*****************2********************");
+
+    //     console.log("sender: %s", address(cBridge));
+    //     console.log("receiver: %s", address(_accounts.usdcWhale));
+    //     console.log("dstChainId: %s", bridgeData.destinationChainId);
+    //     console.log("bridge: %s", CBRIDGE_ROUTER);
+    //     console.log("fee: %s", messageBusFee);
+
+    //     console.log("srcTransferId:");
+    //     emit log_bytes32(transferId);
+    //     console.log("message:");
+    //     emit log_bytes(destCallData);
+    //     console.log("*************************************");
+
+
+
+
+
+    //     // check if MessageWithTransfer event will be emitted by MessageBus with correct data
+    //     //! TODO TransferId does not match
+    //     //! will be difficult to set up with varying bridges used (transferId computation differs)
+    //     // vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS_ETH);
+    //     // emit MessageWithTransfer(
+    //     //     address(cBridge),
+    //     //     address(_accounts.usdcWhale),
+    //     //     bridgeData.destinationChainId,
+    //     //     CBRIDGE_ROUTER,
+    //     //     transferId,
+    //     //     destCallData,
+    //     //     messageBusFee
+    //     // );
+    //     // check if LiFiTransferStarted event will be emitted by our contract with correct data
+    //     vm.expectEmit(true, true, true, true, address(cBridge));
+    //     emit LiFiTransferStarted(bridgeData);
+
+
+    //     // initiate transaction on src side
+    //     //TODO FA
+    //     cBridge.swapAndStartBridgeTokensViaCBridge{value:messageBusFee}(bridgeData, swapDataSrc, cBridgeData);
+
+    //     // check  balances and make assertions
+    //     // TODO
+
+
+    //     //! src side done (src swap & events checked)
+
+    //     //! ###########################################
+    //     //! ############ [DONE: 50%] ##################
+    //     console.log("############ [DONE: 50%] ##################");
+    //     //! ###########################################
+    //     //! ---- now check release on dest side -------
+
+
+    //     vm.stopPrank();
+    //     selectForkWithAccounts(137);     
+    //     vm.startPrank(_accounts.daiWhale);
+        
+
+    //     // prepare check for events
+    //     // TODO
+
+    //     // trigger dest side swap and bridging
+    //     // send bridged tokens to Receiver
+    //     _accounts.daiToken.transfer(_accounts.receiver, 100 * 10**_accounts.daiToken.decimals());
+    //     setInitialBalances();
+
+    //     assertEq(_accounts.daiToken.balanceOf(_accounts.receiver), 100 * 10**_accounts.daiToken.decimals());
+
+
+
+    //     // call testReceive function in Receiver
+    //     ReceiverCelerIM cReceiver = ReceiverCelerIM(_accounts.receiver);
+    //     // console.log("hier1");
+    //     emit log_string("hier1");
+    //     // emit log_address(_accounts.daiToken.balanceOf(_accounts.receiver));
+
+    //     console.log("USDC_WHALE: %s", USDC_WHALE);
+    //     console.log("bridgeData.sendingAssetId: %s", bridgeData.sendingAssetId);
+    //     console.log("bridgeData.minAmount: %s", bridgeData.minAmount);
+
+    //     emit log_bytes(cBridgeData.callData);
+        
+    //     cReceiver.executeMessageWithTransfer(
+    //         USDC_WHALE,
+    //         bridgeData.sendingAssetId,
+    //         bridgeData.minAmount,
+    //         1,
+    //         cBridgeData.callData,
+    //         address(this)
+    //     );
+
+                
+
+    //     console.log("hier2");
+
+
+
+
+
+
+
+
+    //     vm.stopPrank();
+    // }
+
+    function testExecutesMessageWithTransferOnDest(uint32 amount) public {
+        console.log("in testExecutesMessageWithTransferOnDest");
+        // switch to src to get correct token address for bridgeData
+        selectForkWithAccounts(1);
+
+        
+
+        uint256 amountOut = 100 * 10 ** _accounts.daiToken.decimals(); //! ????
 
         // prepare bridge data
         ILiFi.BridgeData memory bridgeData = ILiFi.BridgeData({
@@ -873,178 +1068,101 @@ contract CBridgeFacetTestDaniel is DSTest, DiamondTest {
             hasDestinationCall:     true
         });
 
-        // prepare dest swap data
         selectForkWithAccounts(137);
+
+        console.log("balance receiver DAI:    %s", _accounts.daiToken.balanceOf(_accounts.receiver));
+        console.log("balance receiver USDC:   %s", _accounts.usdcToken.balanceOf(_accounts.receiver));
+        
+        console.log("balance USDC_WHALE DAI:  %s", _accounts.daiToken.balanceOf(_accounts.usdcWhale));
+        console.log("balance USDC_WHALE USDC: %s", _accounts.usdcToken.balanceOf(_accounts.usdcWhale));
+        
+        console.log("balance executor DAI:    %s", _accounts.daiToken.balanceOf(_accounts.executor));
+        console.log("balance executor USDC:   %s", _accounts.usdcToken.balanceOf(_accounts.executor));
+
+
+        // prepare dest swap data
         deployReceiverAndExecutor();
+
         uint256 amountInDest = amountOut;
         address[] memory pathDest = new address[](2);
         pathDest[0] = address(_accounts.daiToken);
         pathDest[1] = address(_accounts.usdcToken);
         uint256[] memory amountsDest = _accounts.dex.getAmountsOut(amountInDest, pathDest);
         uint256 amountOutDest = amountsDest[0];
-        console.log("_accounts.receiver: %s", _accounts.receiver);
-        console.log("_accounts.usdcToken: %s",address(_accounts.usdcToken));
-        _accounts.usdcToken.approve(_accounts.receiver, amountInDest);
-        console.log("5");
-        
-        bytes memory destCallData = abi.encodeWithSelector(
-            uniswap.swapExactTokensForTokens.selector,
-            amountInDest,
-            amountOutDest,
-            pathDest,
-            address(_accounts.usdcWhale),
-            block.timestamp + 20 minutes
+        console.log("amountInDest:  %s", amountInDest);
+        console.log("amountOutDest: %s", amountOutDest);
+        // _accounts.usdcToken.approve(_accounts.receiver, amountInDest);
+        // revert();
+
+        // prepare swap data for swap at dest chain  (DAI -> USDC)
+        LibSwap.SwapData[] memory swapDataDest = new LibSwap.SwapData[](1);
+        swapDataDest[0] = LibSwap.SwapData({
+            callTo:             address(_accounts.dex),
+            approveTo:          address(_accounts.dex),
+            sendingAssetId:     address(_accounts.daiToken),
+            receivingAssetId:   address(_accounts.usdcToken),
+            fromAmount:         amountInDest,
+            callData:           abi.encodeWithSelector(
+                                    uniswap.swapExactTokensForTokens.selector,
+                                    amountInDest,
+                                    0,
+                                    pathDest,
+                                    _accounts.executor,     // has same address across networks
+                                    block.timestamp + 20 minutes
+                                ),
+            requiresDeposit:    false
+        });
+
+        bytes32 txId = "txId";
+        bytes memory destCallData = abi.encode(
+            txId,                   // transactionId
+            swapDataDest,           // swapData
+            _accounts.usdcWhale,    // receiver
+            _accounts.user1         // refundAddress
         );
-
-        // //! ---------- switch back to src side -------------
-        selectForkWithAccounts(1);
-
-
-        // Calculate messageBusFee based on message length
-        uint256 messageBusFee = IMessageBus(CBRIDGE_MESSAGE_BUS).calcFee(destCallData);
-        
-        // calculate nonce as recommended by CBridge
-        uint64 nonce = uint64(uint(keccak256(abi.encodePacked(
-                block.timestamp,
-                msg.sender,
-                block.number
-        ))));
-
-        // prepare cBridgeData
-        CBridgeFacet.CBridgeData memory cBridgeData = CBridgeFacet.CBridgeData({
-            maxSlippage:    5000,
-            nonce:          nonce,
-            callTo:         abi.encodePacked(address(_accounts.receiver)),
-            callData:       destCallData,
-            messageBusFee:  messageBusFee,
-            bridgeType:     MsgDataTypes.BridgeSendType.Liquidity
-        });   
 
         // prepare check for events
-            // calculate transferId as it will be produced during bridging
-        bytes32 transferId = keccak256(
-                abi.encodePacked(
-                    address(cBridge),
-                    address(_accounts.receiver),
-                    bridgeData.sendingAssetId,
-                    bridgeData.minAmount,
-                    uint64(bridgeData.destinationChainId),
-                    cBridgeData.nonce,
-                    uint64(block.chainid)
-                )
+        vm.expectEmit(true,true,true,true, _accounts.receiver);
+        emit LiFiTransferCompleted(
+            txId,
+            address(_accounts.daiToken),
+            _accounts.usdcWhale,
+            amountOut,
+            block.timestamp
         );
-
-            // check if MessageWithTransfer event will be emitted by MessageBus with correct data
-        vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS);
-        emit MessageWithTransfer(
-            address(cBridge),
-            address(_accounts.receiver),
-            bridgeData.destinationChainId,
-            CBRIDGE_ROUTER,
-            transferId,
-            destCallData,
-            messageBusFee
-        );
-            // check if LiFiTransferStarted event will be emitted by our contract with correct data
-        vm.expectEmit(true, true, true, true, address(cBridge));
-        emit LiFiTransferStarted(bridgeData);
-
-
-        // initiate transaction on src side
-        //TODO FA
-        cBridge.swapAndStartBridgeTokensViaCBridge{value:messageBusFee}(bridgeData, swapDataSrc, cBridgeData);
-
-        // check  balances and make assertions
-        // TODO
-
-
-        //! src side done (src swap & events checked)
-
-        //! ###########################################
-        //! ############ [DONE: 50%] ##################
-        console.log("############ [DONE: 50%] ##################");
-        //! ###########################################
-
-        //* ---------- now check release on dest side -------------
-        vm.stopPrank();
-        selectForkWithAccounts(137);     
-        vm.startPrank(_accounts.daiWhale);
-        
-
-        // prepare check for events
-        // TODO
-
-        // trigger dest side swap and bridging
-        // send bridged tokens to Receiver
-        _accounts.daiToken.transfer(_accounts.receiver, 100 * 10**_accounts.daiToken.decimals());
         setInitialBalances();
 
-        assertEq(_accounts.daiToken.balanceOf(_accounts.receiver), 100 * 10**_accounts.daiToken.decimals());
+        // trigger dest side swap and bridging
+        // (mock) send "bridged" tokens to Receiver 
+        vm.startPrank(_accounts.daiWhale);
+        _accounts.daiToken.transfer(_accounts.receiver, amountOut);
+
 
         // call testReceive function in Receiver
-        console.log("hier");
-        // Receiver(_accounts.receiver).testReceive(abi.encode(cBridgeData));
-                
+        ReceiverCelerIM cReceiver = ReceiverCelerIM(_accounts.receiver);
+        cReceiver.executeMessageWithTransfer(
+            address(cBridge),
+            address(_accounts.daiToken),
+            bridgeData.minAmount,
+            1,
+            destCallData,
+            address(this)
+        );
+        
+        console.log("balance receiver DAI:    %s", _accounts.daiToken.balanceOf(address(cReceiver)));
+        console.log("balance receiver USDC:   %s", _accounts.usdcToken.balanceOf(address(cReceiver)));
+        
+        console.log("balance USDC_WHALE DAI:  %s", _accounts.daiToken.balanceOf(_accounts.usdcWhale));
+        console.log("balance USDC_WHALE USDC: %s", _accounts.usdcToken.balanceOf(_accounts.usdcWhale));
+        
+        console.log("balance executor DAI:    %s", _accounts.daiToken.balanceOf(_accounts.executor));
+        console.log("balance executor USDC:   %s", _accounts.usdcToken.balanceOf(_accounts.executor));
+        
+        //TODO check balances with assertions
+        // assertEq(initialBalances[_accounts.daiToken][AddressTypes.DAI_WHALE], getBalanceDAI());
 
-        console.log("hier1");
-
-
-
-
-
-
-
-
-        // // prepare callData for dest call
-        // // Swap USDC > DAI at dest 
-        // //! (should use dest chain addresses here)
-
-
-
-
-        // // prepare cBridgeData
-        // CBridgeFacet.CBridgeData memory cBridgeData = CBridgeFacet.CBridgeData({
-        //     maxSlippage:    5000,
-        //     nonce:          nonce,
-        //     callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_ETH)),
-        //     callTo:         abi.encodePacked(address(UNISWAP_V2_ROUTER_POLY)) 
-        //     callData:       destCallData,
-        //     messageBusFee:  messageBusFee,
-        //     bridgeType:     MsgDataTypes.BridgeSendType.Liquidity
-        // });   
-
-        // // check if function call emits events
-        //     // calculate transferId as it will be produced during bridging
-        // bytes32 transferId = keccak256(
-        //         abi.encodePacked(
-        //             address(cBridge),
-        //             bridgeData.receiver,
-        //             bridgeData.sendingAssetId,
-        //             bridgeData.minAmount,
-        //             uint64(bridgeData.destinationChainId),
-        //             cBridgeData.nonce, 
-        //             uint64(block.chainid)
-        //         )
-        // );
-
-        //     // check if MessageWithTransfer event will be emitted by MessageBus with correct data
-        // vm.expectEmit(true, false, false, true, CBRIDGE_MESSAGE_BUS);
-        // emit MessageWithTransfer(
-        //     address(cBridge),
-        //     bridgeData.receiver,
-        //     bridgeData.destinationChainId,
-        //     CBRIDGE_ROUTER,
-        //     transferId,
-        //     destCallData,
-        //     messageBusFee
-        // );
-        //     // check if LiFiTransferStarted event will be emitted by our contract with correct data
-        // vm.expectEmit(true, true, true, true, address(cBridge));
-        // emit LiFiTransferStarted(bridgeData);
-        // cBridge.swapAndStartBridgeTokensViaCBridge{value:messageBusFee}(bridgeData, swapDataSrc, cBridgeData);
-
-        // // check balances
-        // // assertEq(initialBalance - amountIn, dai.balanceOf(DAI_WHALE));
         vm.stopPrank();
     }
+
+    //#endregion
 }

@@ -12,6 +12,12 @@ import { Validatable } from "../Helpers/Validatable.sol";
 import { MessageSenderLib, MsgDataTypes, IMessageBus } from "celer-network/contracts/message/libraries/MessageSenderLib.sol";
 import { console } from "forge-std/console.sol";
 import { ERC20 } from "solmate/tokens/ERC20.sol";
+//  tmp
+import { Vm } from "forge-std/Vm.sol";
+import { DSTest } from "ds-test/test.sol";
+
+
+
 
 interface IOriginalTokenVault {
     function deposit(
@@ -72,11 +78,10 @@ interface IPeggedTokenBridgeV2 {
     ) external returns (bytes32);
 }
 
-
 /// @title CBridge Facet
 /// @author LI.FI (https://li.fi)
 /// @notice Provides functionality for bridging through CBridge
-contract CBridgeFacet is ILiFi, ReentrancyGuard, SwapperV2, Validatable {
+contract CBridgeFacet is ILiFi, ReentrancyGuard, SwapperV2, Validatable, DSTest {
     /// Storage ///
 
     /// @notice The contract address of the cbridge on the source chain.
@@ -166,22 +171,30 @@ contract CBridgeFacet is ILiFi, ReentrancyGuard, SwapperV2, Validatable {
         if (_cBridgeData.bridgeType != MsgDataTypes.BridgeSendType.Liquidity) revert(); //TODO add correct error
         
         // transfer tokens
-        bytes32 transferId = _sendTokenTransfer(_bridgeData, _cBridgeData);
+        (bytes32 transferId, address bridgeAddress) = _sendTokenTransfer(_bridgeData, _cBridgeData);
 
         // assuming messageBusFee is pre-calculated off-chain
         
         // check if transaction contains a destination call
         if (_bridgeData.hasDestinationCall) {
-            // calculate transferId as input for message bus call
-            // bytes32 transferId = _computeTransferId(                
-            //     _bridgeData.receiver,       // user wallet
-            //     _bridgeData.sendingAssetId,
-            //     _bridgeData.minAmount,
-            //     uint64(_bridgeData.destinationChainId),
-            //     _cBridgeData.nonce
-            // );
-
             // send message
+                console.log("");
+                console.log("");
+                console.log("****************1*********************");
+
+            console.log("sender: %s", address(this));
+            console.log("receiver: %s", _bridgeData.receiver);
+            console.log("dstChainId: %s", uint64(_bridgeData.destinationChainId));
+            console.log("bridge: %s", bridgeAddress);
+            console.log("fee: %s", _cBridgeData.messageBusFee);
+
+            console.log("srcTransferId: %s");
+            emit log_bytes32(transferId);
+            console.log("message: %s");
+            emit log_bytes(_cBridgeData.callData);
+            console.log("*************************************");
+
+
             cBridgeMessageBus.sendMessageWithTransfer{value: _cBridgeData.messageBusFee}(
                 _bridgeData.receiver,
                 uint64(_bridgeData.destinationChainId),
@@ -205,7 +218,7 @@ contract CBridgeFacet is ILiFi, ReentrancyGuard, SwapperV2, Validatable {
     }
 
     // initiates a cross-chain token transfer using cBridge
-    function _sendTokenTransfer(ILiFi.BridgeData memory _bridgeData, CBridgeData memory _cBridgeData) private returns (bytes32 transferId){
+    function _sendTokenTransfer(ILiFi.BridgeData memory _bridgeData, CBridgeData memory _cBridgeData) private returns (bytes32 transferId, address bridgeAddress){
         // !------------ new implementation for bridge type 1 (=LIQUIDITY) only 
         // if (LibAsset.isNativeAsset(_bridgeData.sendingAssetId)) {
         //     // TODO make sure that native transfers can only be sent via xLiquidity bridge
@@ -233,7 +246,6 @@ contract CBridgeFacet is ILiFi, ReentrancyGuard, SwapperV2, Validatable {
         // }
 
         //!------------ new implementation for all bridge types
-        address bridgeAddress;
         // approve to and call correct bridge depending on BridgeSendType 
         if (_cBridgeData.bridgeType == MsgDataTypes.BridgeSendType.Liquidity) {
             bridgeAddress = cBridgeMessageBus.liquidityBridge();

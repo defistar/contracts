@@ -76,6 +76,7 @@ contract CBridgeRefundTestPolygon is DSTest, DiamondTest {
         fork();
 
         diamond = LiFiDiamond(payable(LIFI_ADDRESS));
+        console.log("diamond at address: %s", LIFI_ADDRESS);
         withdrawFacet = new WithdrawFacet();
 
         bytes4[] memory selector = new bytes4[](1);
@@ -100,13 +101,20 @@ contract CBridgeRefundTestPolygon is DSTest, DiamondTest {
 
         vm.startPrank(OWNER_ADDRESS);
         vm.chainId(137); // Only needed because of bug in forge forking...
-        withdrawFacet.executeCallAndWithdraw(
-            payable(CBRIDGE_ADDRESS),
-            CALLDATA,
-            REFUND_ASSET,
-            REFUND_ADDRESS,
-            REFUND_AMOUNT
-        );
+
+        console.log("CBRIDGE_ADDRESS: %s", CBRIDGE_ADDRESS);
+        console.log("REFUND_ASSET: %s", REFUND_ASSET);
+        console.log("REFUND_ADDRESS: %s", REFUND_ADDRESS);
+        console.log("REFUND_AMOUNT: %s", REFUND_AMOUNT);
+
+
+        // withdrawFacet.executeCallAndWithdraw(
+        //     payable(CBRIDGE_ADDRESS),
+        //     CALLDATA,
+        //     REFUND_ASSET,
+        //     REFUND_ADDRESS,
+        //     REFUND_AMOUNT
+        // );
         vm.stopPrank();
 
         assert(asset.balanceOf(REFUND_ADDRESS) == assetBalance + REFUND_AMOUNT);
