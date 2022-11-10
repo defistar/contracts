@@ -141,5 +141,6 @@ contract CBridgeFacetTest is DSTest, DiamondTest {
         dai.approve(address(cBridge), amountIn);
         cBridge.swapAndStartBridgeTokensViaCBridge(bridgeData, swapData, data);
         vm.stopPrank();
+        vm.stopPrank();
     }
 }
