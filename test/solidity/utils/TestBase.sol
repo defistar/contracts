@@ -239,7 +239,7 @@ abstract contract TestBase is Test, DiamondTest, ILiFi {
             sendingAssetId: ADDRESS_USDC,
             receiver: USER_RECEIVER,
             minAmount: defaultUSDCAmount,
-            destinationChainId: 137,
+            destinationChainId: 42161,
             hasSourceSwaps: false,
             hasDestinationCall: false
         });

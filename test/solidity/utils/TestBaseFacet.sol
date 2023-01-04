@@ -89,7 +89,16 @@ abstract contract TestBaseFacet is TestBase {
 
         emit LiFiTransferStarted(bridgeData);
 
+        uint256 gasStockBeforeBridge = gasleft();
+
         initiateBridgeTxWithFacet(false);
+
+        uint256 gasStockAfterBridge = gasleft();
+
+        console.log("bridge Name: ", bridgeData.bridge);
+
+        console.log("ERC20 transfer costed: ", gasStockBeforeBridge - gasStockAfterBridge);
+
         vm.stopPrank();
     }
 
@@ -110,7 +119,16 @@ abstract contract TestBaseFacet is TestBase {
         vm.expectEmit(true, true, true, true, _facetTestContractAddress);
         emit LiFiTransferStarted(bridgeData);
 
+        uint256 gasStockBeforeBridge = gasleft();
+
         initiateBridgeTxWithFacet(true);
+
+        uint256 gasStockAfterBridge = gasleft();
+
+        console.log("bridge Name: ", bridgeData.bridge);
+
+        console.log("Native transfer costed: ", gasStockBeforeBridge - gasStockAfterBridge);
+
         vm.stopPrank();
     }
 

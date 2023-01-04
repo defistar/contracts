@@ -50,13 +50,15 @@ contract AcrossFacetTest is TestBaseFacet {
 
         // adjust bridgeData
         bridgeData.bridge = "across";
-        bridgeData.destinationChainId = 137;
+        bridgeData.destinationChainId = 10;
 
         // produce valid AcrossData
         validAcrossData = AcrossFacet.AcrossData({ relayerFeePct: 0, quoteTimestamp: uint32(block.timestamp) });
     }
 
     function initiateBridgeTxWithFacet(bool isNative) internal override {
+        console.log("In Test Diamond Address : ", address(diamond));
+        console.log("In Test  AcrossFacet Address is: ", address(acrossFacet));
         if (isNative) {
             acrossFacet.startBridgeTokensViaAcross{ value: bridgeData.minAmount }(bridgeData, validAcrossData);
         } else {

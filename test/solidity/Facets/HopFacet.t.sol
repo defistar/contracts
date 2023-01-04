@@ -27,7 +27,7 @@ contract HopFacetTest is TestBaseFacet {
     address internal constant DAI_BRIDGE = 0x3d4Cc8A61c7528Fd86C55cfe061a78dCBA48EDd1;
     address internal constant NATIVE_BRIDGE = 0xb8901acB165ed027E32754E0FFe830802919727f;
     address internal constant CONNEXT_HANDLER = 0xB4C1340434920d70aD774309C75f9a4B679d801e;
-    uint256 internal constant DSTCHAIN_ID = 137;
+    uint256 internal constant DSTCHAIN_ID = 42161;
     // -----
 
     TestHopFacet internal hopFacet;
@@ -65,7 +65,7 @@ contract HopFacetTest is TestBaseFacet {
 
         // adjust bridgeData
         bridgeData.bridge = "hop";
-        bridgeData.destinationChainId = 137;
+        bridgeData.destinationChainId = 42161;
 
         // produce valid HopData
         validHopData = HopFacet.HopData({

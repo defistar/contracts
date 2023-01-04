@@ -50,7 +50,7 @@ contract MultichainFacetTest is TestBaseFacet {
 
     function setUp() public {
         // set custom block number for forking
-        customBlockNumberForForking = 15588208;
+        customBlockNumberForForking = 16333088;
 
         initTestBase();
 
@@ -100,7 +100,7 @@ contract MultichainFacetTest is TestBaseFacet {
         // adjust bridgeData
         bridgeData.bridge = "multichain";
         bridgeData.sendingAssetId = ADDRESS_USDC; //anyUSDC
-        bridgeData.destinationChainId = 56;
+        bridgeData.destinationChainId = 42161;
 
         // produce valid HopData
         multichainData = MultichainFacet.MultichainData({ router: ANYSWAPV4ROUTER });

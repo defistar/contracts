@@ -12,6 +12,7 @@ import { ERC20 } from "solmate/tokens/ERC20.sol";
 import { UniswapV2Router02 } from "../utils/Interfaces.sol";
 import { IL1StandardBridge } from "lifi/Interfaces/IL1StandardBridge.sol";
 import "lifi/Errors/GenericErrors.sol";
+import "forge-std/console.sol";
 
 // Stub OptimismBridgeFacet Contract
 contract TestOptimismBridgeFacet is OptimismBridgeFacet {
@@ -169,7 +170,12 @@ contract OptimismBridgeFacetTest is DSTest, DiamondTest {
         vm.startPrank(DAI_L1_HOLDER);
         dai.approve(address(optimismBridgeFacet), 10_000 * 10**dai.decimals());
 
+        uint256 gasStockBeforeBridge = gasleft();
         optimismBridgeFacet.startBridgeTokensViaOptimismBridge(validBridgeData, validOptimismData);
+        uint256 gasStockAfterBridge = gasleft();
+
+        console.log("gas cost for Optimism ERC20-DAI bridging: ", gasStockBeforeBridge - gasStockAfterBridge);
+
         vm.stopPrank();
     }
 

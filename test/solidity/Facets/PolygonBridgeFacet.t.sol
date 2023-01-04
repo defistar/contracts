@@ -57,6 +57,7 @@ contract PolygonBridgeFacetTest is TestBaseFacet {
         if (isNative) {
             polygonBridgeFacet.startBridgeTokensViaPolygonBridge{ value: bridgeData.minAmount }(bridgeData);
         } else {
+            console.log("destinationChainId is: ", bridgeData.destinationChainId);
             polygonBridgeFacet.startBridgeTokensViaPolygonBridge(bridgeData);
         }
     }
