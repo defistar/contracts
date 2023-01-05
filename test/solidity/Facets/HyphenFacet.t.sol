@@ -50,6 +50,8 @@ contract HyphenFacetTest is TestBaseFacet {
     }
 
     function initiateBridgeTxWithFacet(bool isNative) internal override {
+
+        console.log("Hyphen Bridge Test - chainId and amount ",bridgeData.destinationChainId, bridgeData.minAmount);
         if (isNative) {
             hyphenFacet.startBridgeTokensViaHyphen{ value: bridgeData.minAmount }(bridgeData);
         } else {
