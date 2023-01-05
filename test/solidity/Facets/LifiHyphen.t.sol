@@ -19,6 +19,7 @@ contract Lifi is Test {
         vm.selectFork(fork);
     }
 
+    //https://etherscan.io/tx/0xab16fbbcd28e802fcc55b77c95f0c283f93b7b3efb090616adc8adb0d6515508
     function testBridgeUSDC() public {
 
         deal(USDC, address(0x7C085b8a1C4D6C7013b2ed6D15B18dD3d5e5ecEa), 2000e6);
